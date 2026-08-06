@@ -1,0 +1,60 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgis/postgis:15-3.4-alpine
+    container_name: deliverylink_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: deliverylink
+      POSTGRES_USER: deliverylink_app
+      POSTGRES_PASSWORD: change_me_strong_password
+    ports:
+      - '5432:5432'
+    volumes:
+      - deliverylink_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U deliverylink_app -d deliverylink']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: deliverylink_redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - deliverylink_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: deliverylink_backend
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env
+    environment:
+      DB_HOST: postgres
+      REDIS_HOST: redis
+    ports:
+      - '4000:4000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../backend:/usr/src/app
+      - /usr/src/app/node_modules
+
+volumes:
+  deliverylink_pg_data:
+  deliverylink_redis_data:
