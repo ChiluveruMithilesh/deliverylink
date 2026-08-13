@@ -3,7 +3,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { registerValidator, loginValidator, refreshValidator } = require('./auth.validators');
+const { registerValidator, loginValidator, refreshValidator, updateProfileValidator } = require('./auth.validators');
 const validate = require('../../middleware/validate');
 const { authenticate } = require('../../middleware/auth');
 const { authLimiter } = require('../../middleware/rateLimiter');
@@ -12,6 +12,7 @@ const {
   loginHandler,
   refreshHandler,
   meHandler,
+  updateMeHandler,
 } = require('./auth.controller');
 
 /**
@@ -73,5 +74,6 @@ router.post('/refresh', authLimiter, refreshValidator, validate, refreshHandler)
  *         description: Not authenticated
  */
 router.get('/me', authenticate, meHandler);
+router.patch('/me', authenticate, updateProfileValidator, validate, updateMeHandler);
 
 module.exports = router;

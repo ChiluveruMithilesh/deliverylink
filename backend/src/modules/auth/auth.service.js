@@ -3,6 +3,7 @@
 const bcrypt = require('bcryptjs');
 const { withTransaction, query } = require('../../config/database');
 const { signAccessToken, signRefreshToken, verifyRefreshToken } = require('../../utils/jwt');
+const { generateUniqueUserCode } = require('../../utils/userCode');
 const ApiError = require('../../utils/ApiError');
 const logger = require('../../utils/logger');
 
@@ -21,13 +22,14 @@ async function register(payload) {
   }
 
   const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+  const userCode = await generateUniqueUserCode();
 
   return withTransaction(async (client) => {
     const userResult = await client.query(
-      `INSERT INTO users (role, full_name, phone, email, password_hash, preferred_language)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'en'))
-       RETURNING id, role, full_name, phone, email, preferred_language, created_at`,
-      [role, fullName, phone, email || null, passwordHash, preferredLanguage]
+      `INSERT INTO users (role, full_name, phone, email, password_hash, preferred_language, user_code)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, 'en'), $7)
+       RETURNING id, role, full_name, phone, email, preferred_language, user_code, created_at`,
+      [role, fullName, phone, email || null, passwordHash, preferredLanguage, userCode]
     );
     const user = userResult.rows[0];
 
@@ -69,7 +71,7 @@ async function register(payload) {
 
 async function login(phone, password) {
   const { rows } = await query(
-    'SELECT id, role, full_name, phone, password_hash, is_active FROM users WHERE phone = $1',
+    'SELECT id, role, full_name, phone, email, preferred_language, user_code, password_hash, is_active FROM users WHERE phone = $1',
     [phone]
   );
   const user = rows[0];
@@ -92,7 +94,15 @@ async function login(phone, password) {
   const refreshToken = signRefreshToken(user);
 
   return {
-    user: { id: user.id, role: user.role, fullName: user.full_name, phone: user.phone },
+    user: {
+      id: user.id,
+      role: user.role,
+      fullName: user.full_name,
+      phone: user.phone,
+      email: user.email,
+      preferredLanguage: user.preferred_language,
+      userCode: user.user_code,
+    },
     accessToken,
     refreshToken,
   };
@@ -121,4 +131,39 @@ async function refresh(refreshToken) {
   };
 }
 
-module.exports = { register, login, refresh };
+async function getProfile(userId) {
+  const { rows } = await query(
+    `SELECT id, role, full_name, phone, email, preferred_language, user_code, created_at
+     FROM users WHERE id = $1`,
+    [userId]
+  );
+  if (!rows[0]) throw ApiError.notFound('User not found');
+  return rows[0];
+}
+
+async function updateProfile(userId, payload) {
+  const fields = [];
+  const values = [];
+  let idx = 1;
+
+  if (payload.fullName !== undefined) {
+    fields.push(`full_name = $${idx++}`);
+    values.push(payload.fullName);
+  }
+  if (payload.email !== undefined) {
+    fields.push(`email = $${idx++}`);
+    values.push(payload.email);
+  }
+  if (payload.preferredLanguage !== undefined) {
+    fields.push(`preferred_language = $${idx++}`);
+    values.push(payload.preferredLanguage);
+  }
+
+  if (fields.length === 0) return getProfile(userId);
+
+  values.push(userId);
+  await query(`UPDATE users SET ${fields.join(', ')} WHERE id = $${idx}`, values);
+  return getProfile(userId);
+}
+
+module.exports = { register, login, refresh, getProfile, updateProfile };

@@ -69,4 +69,10 @@ const loginValidator = [
 
 const refreshValidator = [body('refreshToken').notEmpty().withMessage('refreshToken is required')];
 
-module.exports = { registerValidator, loginValidator, refreshValidator };
+const updateProfileValidator = [
+  body('fullName').optional().trim().isLength({ min: 2, max: 120 }),
+  body('email').optional().isEmail().withMessage('email must be valid'),
+  body('preferredLanguage').optional().isIn(['en', 'te']),
+];
+
+module.exports = { registerValidator, loginValidator, refreshValidator, updateProfileValidator };
