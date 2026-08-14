@@ -52,6 +52,11 @@ class ShopkeeperDashboardScreen extends ConsumerWidget {
           },
         ),
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => context.push('/shopkeeper/order'),
+        icon: const Icon(Icons.shopping_cart_outlined),
+        label: const Text('Order'),
+      ),
     );
   }
 }

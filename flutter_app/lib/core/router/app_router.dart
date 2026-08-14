@@ -18,6 +18,9 @@ import '../../features/driver/presentation/screens/driver_history_screen.dart';
 import '../../features/driver/presentation/screens/nearby_trips_screen.dart';
 import '../../features/notifications/presentation/screens/notifications_screen.dart';
 import '../../features/settings/settings_screen.dart';
+import '../../features/orders/presentation/screens/order_requests_inbox_screen.dart';
+import '../../features/orders/presentation/screens/send_order_request_screen.dart';
+import '../../features/profile/presentation/screens/profile_screen.dart';
 import '../../features/shopkeeper/presentation/screens/shop_tracking_screen.dart';
 import '../../features/shopkeeper/presentation/screens/shopkeeper_dashboard_screen.dart';
 import '../../shared/widgets/splash_screen.dart';
@@ -102,10 +105,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       // Shared across all authenticated roles
       GoRoute(path: '/notifications', builder: (context, state) => const NotificationsScreen()),
       GoRoute(path: '/settings', builder: (context, state) => const SettingsScreen()),
+      GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
+
+      // Orders - shopkeeper sends, distributor receives
+      GoRoute(path: '/shopkeeper/order', builder: (context, state) => const SendOrderRequestScreen()),
+      GoRoute(path: '/distributor/orders', builder: (context, state) => const OrderRequestsInboxScreen()),
     ],
   );
 });
 
 bool _isSharedRoute(String location) {
-  return location.startsWith('/notifications') || location.startsWith('/settings');
+  return location.startsWith('/notifications') ||
+      location.startsWith('/settings') ||
+      location.startsWith('/profile');
 }

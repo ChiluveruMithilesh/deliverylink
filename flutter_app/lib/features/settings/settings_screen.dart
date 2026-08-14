@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers/core_providers.dart';
 import '../auth/presentation/providers/auth_provider.dart';
+import 'package:go_router/go_router.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -16,6 +17,16 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.person_outline),
+              title: const Text('My Profile'),
+              subtitle: const Text('View your details and unique ID'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push('/profile'),
+            ),
+          ),
+          const SizedBox(height: 16),
           Card(
             child: SwitchListTile(
               secondary: Icon(isDark ? Icons.dark_mode : Icons.light_mode),

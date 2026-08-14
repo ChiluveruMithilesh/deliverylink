@@ -63,10 +63,25 @@ class DistributorDashboardScreen extends ConsumerWidget {
           },
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push('/distributor/create-trip'),
-        icon: const Icon(Icons.add),
-        label: const Text('New Trip'),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'orders-inbox',
+            onPressed: () => context.push('/distributor/orders'),
+            icon: const Icon(Icons.inbox_outlined),
+            label: const Text('Requests'),
+            backgroundColor: Colors.white,
+            foregroundColor: const Color(0xFF0F9D58),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'new-trip',
+            onPressed: () => context.push('/distributor/create-trip'),
+            icon: const Icon(Icons.add),
+            label: const Text('New Trip'),
+          ),
+        ],
       ),
     );
   }
