@@ -54,6 +54,7 @@ app.use('/api/v1/shopkeeper', require('./modules/shopkeeper/shopkeeper.routes'))
 app.use('/api/v1/admin', require('./modules/admin/admin.routes'));
 app.use('/api/v1/notifications', require('./modules/notifications/notifications.routes'));
 app.use('/api/v1/orders', require('./modules/orders/orders.routes'));
+app.use('/api/v1/places', require('./modules/places/places.routes'));
 app.use('/api/v1/uploads', uploadsRouter);
 
 // --- 404 + error handling (must be last) ---

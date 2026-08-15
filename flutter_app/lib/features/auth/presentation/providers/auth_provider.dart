@@ -17,6 +17,17 @@ class AuthInitial extends AuthState {
   const AuthInitial();
 }
 
+/// ONLY used while checking for an existing session on app startup -
+/// this is the one loading state the router should treat as "not
+/// resolved yet" and route to the splash screen for.
+class AuthSessionRestoring extends AuthState {
+  const AuthSessionRestoring();
+}
+
+/// Used while an explicit login/register call is in flight. The screen
+/// that triggered it shows its own spinner (via the button's isLoading);
+/// the router does NOT navigate away for this - doing so was destroying
+/// the login screen mid-attempt and silently swallowing error messages.
 class AuthLoading extends AuthState {
   const AuthLoading();
 }
@@ -43,7 +54,7 @@ class AuthController extends StateNotifier<AuthState> {
   final AuthRepository _repository;
 
   Future<void> _restoreSession() async {
-    state = const AuthLoading();
+    state = const AuthSessionRestoring();
     final hasSession = await _repository.hasValidSession();
     if (!hasSession) {
       state = const AuthUnauthenticated();

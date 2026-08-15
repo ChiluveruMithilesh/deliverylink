@@ -125,13 +125,21 @@ class ApiClient {
 
     final body = e.response!.data;
     final errorObj = body is Map ? body['error'] as Map<String, dynamic>? : null;
-    final message = errorObj?['message'] as String? ?? 'Something went wrong';
+    final genericMessage = errorObj?['message'] as String? ?? 'Something went wrong';
     final details = (errorObj?['details'] as List?) ?? [];
+    final fieldErrors = details.map((d) => FieldError.fromJson(d as Map<String, dynamic>)).toList();
+
+    // When the server rejects specific fields (e.g. "phone must be a valid
+    // 10-digit number"), show that exact reason instead of the generic
+    // "Validation failed" - it's the difference between a user knowing
+    // what to fix and just seeing a dead end.
+    final displayMessage =
+        fieldErrors.isNotEmpty ? fieldErrors.map((f) => f.message).join('\n') : genericMessage;
 
     return ApiException(
-      message: message,
+      message: displayMessage,
       statusCode: e.response!.statusCode,
-      fieldErrors: details.map((d) => FieldError.fromJson(d as Map<String, dynamic>)).toList(),
+      fieldErrors: fieldErrors,
     );
   }
 }

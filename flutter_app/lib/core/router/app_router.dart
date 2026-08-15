@@ -17,10 +17,10 @@ import '../../features/driver/presentation/screens/driver_dashboard_screen.dart'
 import '../../features/driver/presentation/screens/driver_history_screen.dart';
 import '../../features/driver/presentation/screens/nearby_trips_screen.dart';
 import '../../features/notifications/presentation/screens/notifications_screen.dart';
-import '../../features/settings/settings_screen.dart';
 import '../../features/orders/presentation/screens/order_requests_inbox_screen.dart';
 import '../../features/orders/presentation/screens/send_order_request_screen.dart';
 import '../../features/profile/presentation/screens/profile_screen.dart';
+import '../../features/settings/settings_screen.dart';
 import '../../features/shopkeeper/presentation/screens/shop_tracking_screen.dart';
 import '../../features/shopkeeper/presentation/screens/shopkeeper_dashboard_screen.dart';
 import '../../shared/widgets/splash_screen.dart';
@@ -35,24 +35,49 @@ String _homeRouteForRole(String role) => switch (role) {
       _ => '/login',
     };
 
+bool _isSharedRoute(String location) {
+  return location.startsWith('/notifications') ||
+      location.startsWith('/settings') ||
+      location.startsWith('/profile');
+}
+
+/// Bridges Riverpod state changes into something GoRouter can listen to
+/// WITHOUT recreating the entire router (and therefore the whole
+/// Navigator/widget tree) on every auth state change. Recreating the
+/// router on each change was wiping out in-progress UI - like an error
+/// SnackBar - before the user ever saw it.
+class _AuthRefreshNotifier extends ChangeNotifier {
+  void notify() => notifyListeners();
+}
+
+final _authRefreshNotifierProvider = Provider<_AuthRefreshNotifier>((ref) {
+  final notifier = _AuthRefreshNotifier();
+  ref.listen(authControllerProvider, (previous, next) => notifier.notify());
+  ref.onDispose(notifier.dispose);
+  return notifier;
+});
+
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authControllerProvider);
+  final refreshNotifier = ref.watch(_authRefreshNotifierProvider);
 
   return GoRouter(
     initialLocation: '/splash',
+    refreshListenable: refreshNotifier,
     redirect: (context, state) {
+      // Read fresh state on every redirect check, rather than capturing
+      // a stale value from when the router was first built.
+      final authState = ref.read(authControllerProvider);
       final location = state.matchedLocation;
       final isAuthRoute = location == '/login' || location == '/register';
       final isSplash = location == '/splash';
 
-      if (authState is AuthInitial || authState is AuthLoading) {
+      if (authState is AuthInitial || authState is AuthSessionRestoring) {
         return isSplash ? null : '/splash';
       }
 
       if (authState is AuthAuthenticated) {
         final home = _homeRouteForRole(authState.user.role);
         if (isSplash || isAuthRoute) return home;
-        // Prevent a distributor from navigating into /driver/* URLs etc.
         final role = authState.user.role;
         if (!location.startsWith('/$role') && !_isSharedRoute(location)) {
           return home;
@@ -60,7 +85,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         return null;
       }
 
-      // Unauthenticated
+      // Unauthenticated or AuthError - stay put so the error can display.
       if (!isAuthRoute) return '/login';
       return null;
     },
@@ -80,6 +105,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => TripDetailScreen(tripId: state.pathParameters['tripId']!),
       ),
       GoRoute(path: '/distributor/reports', builder: (context, state) => const ReportsScreen()),
+      GoRoute(path: '/distributor/orders', builder: (context, state) => const OrderRequestsInboxScreen()),
 
       // Driver
       GoRoute(path: '/driver', builder: (context, state) => const DriverDashboardScreen()),
@@ -96,6 +122,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         path: '/shopkeeper/track/:tripId',
         builder: (context, state) => ShopTrackingScreen(tripId: state.pathParameters['tripId']!),
       ),
+      GoRoute(path: '/shopkeeper/order', builder: (context, state) => const SendOrderRequestScreen()),
 
       // Admin
       GoRoute(path: '/admin', builder: (context, state) => const AdminDashboardScreen()),
@@ -106,16 +133,6 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: '/notifications', builder: (context, state) => const NotificationsScreen()),
       GoRoute(path: '/settings', builder: (context, state) => const SettingsScreen()),
       GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
-
-      // Orders - shopkeeper sends, distributor receives
-      GoRoute(path: '/shopkeeper/order', builder: (context, state) => const SendOrderRequestScreen()),
-      GoRoute(path: '/distributor/orders', builder: (context, state) => const OrderRequestsInboxScreen()),
     ],
   );
 });
-
-bool _isSharedRoute(String location) {
-  return location.startsWith('/notifications') ||
-      location.startsWith('/settings') ||
-      location.startsWith('/profile');
-}
