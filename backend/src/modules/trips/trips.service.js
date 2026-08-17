@@ -25,13 +25,8 @@ async function getDriverIdForUser(userId) {
   return rows[0].id;
 }
 
-/**
- * Creates a trip in 'draft' status along with all its stops.
- * Stops are re-ordered via route optimization before being persisted.
- */
 async function createTrip(userId, payload) {
   const distributorId = await getDistributorIdForUser(userId);
-
   const route = await getOptimizedRoute(payload.pickupLat, payload.pickupLng, payload.stops);
 
   return withTransaction(async (client) => {
@@ -91,11 +86,6 @@ async function createTrip(userId, payload) {
   });
 }
 
-/**
- * Only draft trips can be freely edited. Editing replaces all stops
- * and re-runs route optimization. Once published/assigned, use
- * cancelTrip + createTrip instead of mutating a live trip.
- */
 async function updateTrip(userId, tripId, payload) {
   const distributorId = await getDistributorIdForUser(userId);
   const trip = await getOwnedDraftTrip(tripId, distributorId);
@@ -278,10 +268,6 @@ async function listDistributorTrips(userId, { status, page = 1, limit = 20 } = {
   return rows;
 }
 
-/**
- * Trips published and within radiusKm of the driver's current position,
- * that the driver hasn't already bid on or been assigned elsewhere.
- */
 async function listNearbyTrips(userId, lat, lng, radiusKm = 20) {
   const driverId = await getDriverIdForUser(userId);
 
@@ -329,10 +315,6 @@ async function notifyNearbyDrivers(trip) {
   );
 }
 
-/**
- * Driver accepts or counter-offers on a published trip.
- * Distributor is notified either way.
- */
 async function placeBid(userId, tripId, offeredAmount) {
   const driverId = await getDriverIdForUser(userId);
 
@@ -370,9 +352,30 @@ async function placeBid(userId, tripId, offeredAmount) {
       body:
         status === 'accepted'
           ? 'A driver has accepted your delivery payment offer.'
-          : `A driver has countered with ₹${offeredAmount}.`,
+          : `A driver has countered with a different amount.`,
     });
   }
+
+  return rows[0];
+}
+
+async function rejectBid(userId, tripId) {
+  const driverId = await getDriverIdForUser(userId);
+
+  const { rows: tripRows } = await query('SELECT id, status FROM trips WHERE id = $1', [tripId]);
+  if (!tripRows[0]) throw ApiError.notFound('Trip not found');
+  if (tripRows[0].status !== 'published') {
+    throw ApiError.badRequest('This trip is no longer open to respond to');
+  }
+
+  const { rows } = await query(
+    `INSERT INTO trip_bids (trip_id, driver_id, offered_amount, status)
+     VALUES ($1, $2, 0, 'rejected')
+     ON CONFLICT (trip_id, driver_id)
+     DO UPDATE SET status = 'rejected', updated_at = now()
+     RETURNING *`,
+    [tripId, driverId]
+  );
 
   return rows[0];
 }
@@ -398,15 +401,10 @@ async function listBids(userId, tripId) {
   return rows;
 }
 
-/**
- * Distributor confirms a specific driver's bid. Assigns the driver,
- * moves the trip to 'assigned', and notifies the driver + all shopkeepers
- * whose shops are part of this trip.
- */
 async function selectBid(userId, tripId, bidId) {
   const distributorId = await getDistributorIdForUser(userId);
 
-  return withTransaction(async (client) => {
+  const { driverUserId, shopUserIds } = await withTransaction(async (client) => {
     const { rows: tripRows } = await client.query(
       'SELECT * FROM trips WHERE id = $1 AND distributor_id = $2 FOR UPDATE',
       [tripId, distributorId]
@@ -434,40 +432,45 @@ async function selectBid(userId, tripId, bidId) {
       [tripId, bidId]
     );
 
-    const { rows: driverUserRows } = await client.query(
-      'SELECT user_id FROM drivers WHERE id = $1',
-      [bid.driver_id]
-    );
-    if (driverUserRows[0]) {
-      await notificationsService.notifyUser({
-        userId: driverUserRows[0].user_id,
-        tripId,
-        title: 'Trip assigned to you',
-        body: 'You have been selected for a delivery trip. Head to the pickup location.',
-      });
-    }
+    const { rows: driverUserRows } = await client.query('SELECT user_id FROM drivers WHERE id = $1', [
+      bid.driver_id,
+    ]);
+    const driverUserId = driverUserRows[0]?.user_id || null;
 
     const stops = await getStopsForTrip(tripId, client);
     const shopIds = stops.filter((s) => s.shop_id).map((s) => s.shop_id);
+    let shopUserIds = [];
     if (shopIds.length > 0) {
       const shopUserRows = await client.query(
         `SELECT DISTINCT s.shopkeeper_user_id FROM shops s WHERE s.id = ANY($1::uuid[])`,
         [shopIds]
       );
-      await Promise.all(
-        shopUserRows.rows.map((r) =>
-          notificationsService.notifyUser({
-            userId: r.shopkeeper_user_id,
-            tripId,
-            title: 'Delivery scheduled',
-            body: 'A distributor has scheduled a delivery for your shop today.',
-          })
-        )
-      );
+      shopUserIds = shopUserRows.rows.map((r) => r.shopkeeper_user_id);
     }
 
-    return getTripById(tripId);
+    return { driverUserId, shopUserIds };
   });
+
+  if (driverUserId) {
+    await notificationsService.notifyUser({
+      userId: driverUserId,
+      tripId,
+      title: 'Trip assigned to you',
+      body: 'You have been selected for a delivery trip. Head to the pickup location.',
+    });
+  }
+  await Promise.all(
+    shopUserIds.map((shopUserId) =>
+      notificationsService.notifyUser({
+        userId: shopUserId,
+        tripId,
+        title: 'Delivery scheduled',
+        body: 'A distributor has scheduled a delivery for your shop today.',
+      })
+    )
+  );
+
+  return getTripById(tripId);
 }
 
 async function confirmPickup(userId, tripId) {
@@ -501,10 +504,6 @@ async function confirmPickup(userId, tripId) {
   return getTripById(tripId);
 }
 
-/**
- * Records a live GPS ping, updates the driver's current position,
- * and caches the latest point in Redis for fast tracking reads.
- */
 async function recordLocationPing(userId, tripId, lat, lng) {
   const driverId = await getDriverIdForUser(userId);
   const { rows } = await query('SELECT id FROM trips WHERE id = $1 AND driver_id = $2', [
@@ -543,10 +542,6 @@ async function getDriverIdForUserSafe(userId) {
   return rows[0]?.id || null;
 }
 
-/**
- * Live tracking read model. Accessible to the owning distributor,
- * the assigned driver, or a shopkeeper whose shop is on the route.
- */
 async function getLiveTracking(requestingUser, tripId) {
   const trip = await getTripById(tripId);
 
@@ -617,93 +612,103 @@ async function arriveAtStop(userId, tripId, stopId) {
   return stop;
 }
 
-/**
- * Records photo + GPS + timestamp proof of delivery for a stop,
- * marks it delivered, and auto-completes the trip once every
- * stop is delivered (or explicitly failed/skipped).
- */
 async function deliverStop(userId, tripId, stopId, proof) {
   const driverId = await getDriverIdForUser(userId);
 
-  return withTransaction(async (client) => {
-    const { rows: tripRows } = await client.query(
-      'SELECT * FROM trips WHERE id = $1 AND driver_id = $2 FOR UPDATE',
-      [tripId, driverId]
-    );
-    const trip = tripRows[0];
-    if (!trip) throw ApiError.notFound('Trip not found or not assigned to you');
+  const { shopNotifyUserId, tripCompleted, distributorNotifyUserId } = await withTransaction(
+    async (client) => {
+      const { rows: tripRows } = await client.query(
+        'SELECT * FROM trips WHERE id = $1 AND driver_id = $2 FOR UPDATE',
+        [tripId, driverId]
+      );
+      const trip = tripRows[0];
+      if (!trip) throw ApiError.notFound('Trip not found or not assigned to you');
 
-    const { rows: stopRows } = await client.query(
-      'SELECT * FROM trip_stops WHERE id = $1 AND trip_id = $2',
-      [stopId, tripId]
-    );
-    const stop = stopRows[0];
-    if (!stop) throw ApiError.notFound('Stop not found');
-    if (stop.status === 'delivered') throw ApiError.badRequest('Stop already marked as delivered');
+      const { rows: stopRows } = await client.query(
+        'SELECT * FROM trip_stops WHERE id = $1 AND trip_id = $2',
+        [stopId, tripId]
+      );
+      const stop = stopRows[0];
+      if (!stop) throw ApiError.notFound('Stop not found');
+      if (stop.status === 'delivered') throw ApiError.badRequest('Stop already marked as delivered');
 
-    if (proof.otp && stop.delivery_otp && proof.otp !== stop.delivery_otp) {
-      throw ApiError.badRequest('Delivery OTP does not match');
-    }
-
-    await client.query(`UPDATE trip_stops SET status = 'delivered', delivered_at = now() WHERE id = $1`, [
-      stopId,
-    ]);
-    await client.query(
-      `INSERT INTO delivery_proofs (trip_stop_id, photo_url, captured_lat, captured_lng, signature_url)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [stopId, proof.photoUrl, proof.capturedLat, proof.capturedLng, proof.signatureUrl || null]
-    );
-
-    if (stop.shop_id) {
-      const { rows: shopRows } = await client.query('SELECT shopkeeper_user_id FROM shops WHERE id = $1', [
-        stop.shop_id,
-      ]);
-      if (shopRows[0]) {
-        await notificationsService.notifyUser({
-          userId: shopRows[0].shopkeeper_user_id,
-          tripId,
-          title: 'Delivery completed',
-          body: `Your delivery has been completed.`,
-        });
+      if (proof.otp && stop.delivery_otp && proof.otp !== stop.delivery_otp) {
+        throw ApiError.badRequest('Delivery OTP does not match');
       }
-    }
 
-    const { rows: remaining } = await client.query(
-      `SELECT COUNT(*)::int AS cnt FROM trip_stops
-       WHERE trip_id = $1 AND status NOT IN ('delivered', 'failed', 'skipped')`,
-      [tripId]
-    );
-
-    if (remaining[0].cnt === 0) {
-      await client.query(`UPDATE trips SET status = 'completed', completed_at = now() WHERE id = $1`, [
-        tripId,
-      ]);
       await client.query(
-        `UPDATE drivers SET total_trips = total_trips + 1,
-           total_distance_km = total_distance_km + COALESCE($2, 0)
-         WHERE id = $1`,
-        [driverId, trip.estimated_distance_km]
+        `UPDATE trip_stops SET status = 'delivered', delivered_at = now() WHERE id = $1`,
+        [stopId]
       );
-      await client.query(`UPDATE distributors SET total_trips = total_trips + 1 WHERE id = $1`, [
-        trip.distributor_id,
-      ]);
+      await client.query(
+        `INSERT INTO delivery_proofs (trip_stop_id, photo_url, captured_lat, captured_lng, signature_url)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [stopId, proof.photoUrl, proof.capturedLat, proof.capturedLng, proof.signatureUrl || null]
+      );
 
-      const { rows: distRows } = await client.query(
-        `SELECT u.id AS user_id FROM distributors dist JOIN users u ON u.id = dist.user_id WHERE dist.id = $1`,
-        [trip.distributor_id]
-      );
-      if (distRows[0]) {
-        await notificationsService.notifyUser({
-          userId: distRows[0].user_id,
-          tripId,
-          title: 'Trip completed',
-          body: 'All stops on this trip have been delivered successfully.',
-        });
+      let shopNotifyUserId = null;
+      if (stop.shop_id) {
+        const { rows: shopRows } = await client.query(
+          'SELECT shopkeeper_user_id FROM shops WHERE id = $1',
+          [stop.shop_id]
+        );
+        shopNotifyUserId = shopRows[0]?.shopkeeper_user_id || null;
       }
-    }
 
-    return getTripById(tripId);
-  });
+      const { rows: remaining } = await client.query(
+        `SELECT COUNT(*)::int AS cnt FROM trip_stops
+         WHERE trip_id = $1 AND status NOT IN ('delivered', 'failed', 'skipped')`,
+        [tripId]
+      );
+
+      let tripCompleted = false;
+      let distributorNotifyUserId = null;
+
+      if (remaining[0].cnt === 0) {
+        tripCompleted = true;
+        await client.query(
+          `UPDATE trips SET status = 'completed', completed_at = now() WHERE id = $1`,
+          [tripId]
+        );
+        await client.query(
+          `UPDATE drivers SET total_trips = total_trips + 1,
+             total_distance_km = total_distance_km + COALESCE($2, 0)
+           WHERE id = $1`,
+          [driverId, trip.estimated_distance_km]
+        );
+        await client.query(`UPDATE distributors SET total_trips = total_trips + 1 WHERE id = $1`, [
+          trip.distributor_id,
+        ]);
+
+        const { rows: distRows } = await client.query(
+          `SELECT u.id AS user_id FROM distributors dist JOIN users u ON u.id = dist.user_id WHERE dist.id = $1`,
+          [trip.distributor_id]
+        );
+        distributorNotifyUserId = distRows[0]?.user_id || null;
+      }
+
+      return { shopNotifyUserId, tripCompleted, distributorNotifyUserId };
+    }
+  );
+
+  if (shopNotifyUserId) {
+    await notificationsService.notifyUser({
+      userId: shopNotifyUserId,
+      tripId,
+      title: 'Delivery completed',
+      body: 'Your delivery has been completed.',
+    });
+  }
+  if (tripCompleted && distributorNotifyUserId) {
+    await notificationsService.notifyUser({
+      userId: distributorNotifyUserId,
+      tripId,
+      title: 'Trip completed',
+      body: 'All stops on this trip have been delivered successfully.',
+    });
+  }
+
+  return getTripById(tripId);
 }
 
 module.exports = {
@@ -715,6 +720,7 @@ module.exports = {
   listDistributorTrips,
   listNearbyTrips,
   placeBid,
+  rejectBid,
   listBids,
   selectBid,
   confirmPickup,

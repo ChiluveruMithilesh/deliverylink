@@ -17,15 +17,9 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  // Idle client errors should never crash the whole process.
   logger.error('Unexpected PostgreSQL pool error', { error: err.message });
 });
 
-/**
- * Run a single query using the shared pool.
- * @param {string} text - SQL query text with $1, $2 placeholders.
- * @param {Array} params - Query parameters.
- */
 async function query(text, params = []) {
   const start = Date.now();
   const result = await pool.query(text, params);
@@ -36,12 +30,13 @@ async function query(text, params = []) {
   return result;
 }
 
-/**
- * Acquire a client for multi-statement transactions.
- * Caller MUST release the client in a finally block.
- */
 async function getClient() {
   const client = await pool.connect();
+
+  client.on('error', (err) => {
+    logger.error('PostgreSQL client error on a checked-out connection', { error: err.message });
+  });
+
   const originalRelease = client.release.bind(client);
   client.release = () => {
     client.release = originalRelease;
@@ -50,11 +45,6 @@ async function getClient() {
   return client;
 }
 
-/**
- * Run a callback inside a transaction, committing on success
- * and rolling back automatically on any thrown error.
- * @param {(client: import('pg').PoolClient) => Promise<any>} callback
- */
 async function withTransaction(callback) {
   const client = await getClient();
   try {
@@ -63,7 +53,11 @@ async function withTransaction(callback) {
     await client.query('COMMIT');
     return result;
   } catch (err) {
-    await client.query('ROLLBACK');
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackErr) {
+      logger.error('Rollback failed', { error: rollbackErr.message });
+    }
     throw err;
   } finally {
     client.release();

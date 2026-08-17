@@ -77,6 +77,13 @@ router.post(
  *     security: [{ bearerAuth: [] }]
  */
 router.post('/:id/bids', authorize('driver'), bidValidator, validate, ctrl.placeBidHandler);
+router.post(
+  '/:id/bids/reject',
+  authorize('driver'),
+  param('id').isUUID(),
+  validate,
+  ctrl.rejectBidHandler
+);
 router.get('/:id/bids', authorize('distributor'), param('id').isUUID(), validate, ctrl.listBidsHandler);
 router.post(
   '/:id/bids/:bidId/select',

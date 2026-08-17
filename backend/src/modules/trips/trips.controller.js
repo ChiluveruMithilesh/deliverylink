@@ -53,6 +53,11 @@ async function placeBidHandler(req, res) {
   res.status(201).json({ success: true, data: bid });
 }
 
+async function rejectBidHandler(req, res) {
+  const bid = await tripsService.rejectBid(req.user.id, req.params.id);
+  res.status(201).json({ success: true, data: bid });
+}
+
 async function listBidsHandler(req, res) {
   const bids = await tripsService.listBids(req.user.id, req.params.id);
   res.json({ success: true, data: bids });
@@ -102,6 +107,7 @@ module.exports = {
   listMineHandler,
   nearbyHandler,
   placeBidHandler,
+  rejectBidHandler,
   listBidsHandler,
   selectBidHandler,
   confirmPickupHandler,

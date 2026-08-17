@@ -114,7 +114,7 @@ class _RideCard extends ConsumerWidget {
 
   Future<void> _bid(BuildContext context, WidgetRef ref, Map<String, dynamic> trip,
       {required bool isAccept}) async {
-    double amount = (trip['payment_offered'] as num).toDouble();
+    double amount = double.parse(trip['payment_offered'].toString());
 
     if (!isAccept) {
       final controller = TextEditingController(text: amount.toStringAsFixed(0));
