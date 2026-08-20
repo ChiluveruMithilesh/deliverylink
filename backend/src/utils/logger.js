@@ -26,12 +26,16 @@ const logger = winston.createLogger({
   exitOnError: false,
 });
 
-if (env.nodeEnv !== 'production') {
-  logger.add(
-    new winston.transports.Console({
-      format: consoleFormat,
-    })
-  );
-}
+// Always log to the console/stdout, in every environment. Render (and
+// most hosting platforms) capture whatever a container prints to
+// stdout as its "Logs" - they cannot see files written inside the
+// container's own filesystem, which also get wiped on every restart.
+// Writing only to local files in production meant every error we
+// logged was going into a void nobody could ever read.
+logger.add(
+  new winston.transports.Console({
+    format: env.nodeEnv === 'production' ? combine(timestamp(), errors({ stack: true }), json()) : consoleFormat,
+  })
+);
 
 module.exports = logger;
