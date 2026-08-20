@@ -672,9 +672,9 @@ async function deliverStop(userId, tripId, stopId, proof) {
         );
         await client.query(
           `UPDATE drivers SET total_trips = total_trips + 1,
-             total_distance_km = total_distance_km + COALESCE($2, 0)
+             total_distance_km = total_distance_km + COALESCE($2::numeric, 0)
            WHERE id = $1`,
-          [driverId, trip.estimated_distance_km]
+          [driverId, trip.estimated_distance_km ? parseFloat(trip.estimated_distance_km) : null]
         );
         await client.query(`UPDATE distributors SET total_trips = total_trips + 1 WHERE id = $1`, [
           trip.distributor_id,
