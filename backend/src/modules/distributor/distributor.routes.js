@@ -25,7 +25,21 @@ router.get(
   ctrl.searchShopsHandler
 );
 
+router.get(
+  '/shops/by-code',
+  [
+    queryValidator('code')
+      .trim()
+      .toUpperCase()
+      .matches(/^DL-[A-Z0-9]{6}$/)
+      .withMessage('code must look like DL-XXXXXX'),
+  ],
+  validate,
+  ctrl.lookupByCodeHandler
+);
+
 router.get('/dashboard', ctrl.dashboardHandler);
+
 router.get('/reports', ctrl.reportsHandler);
 
 module.exports = router;

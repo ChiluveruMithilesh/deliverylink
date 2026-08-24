@@ -12,6 +12,12 @@ async function searchShopsHandler(req, res) {
   res.json({ success: true, data: shops });
 }
 
+async function lookupByCodeHandler(req, res) {
+  const { code } = req.query;
+  const result = await distributorService.lookupShopsByCode(code.trim().toUpperCase());
+  res.json({ success: true, data: result });
+}
+
 async function dashboardHandler(req, res) {
   const dashboard = await distributorService.getDashboard(req.user.id);
   res.json({ success: true, data: dashboard });
@@ -23,4 +29,4 @@ async function reportsHandler(req, res) {
   res.json({ success: true, data: reports });
 }
 
-module.exports = { searchShopsHandler, dashboardHandler, reportsHandler };
+module.exports = { searchShopsHandler, lookupByCodeHandler, dashboardHandler, reportsHandler };

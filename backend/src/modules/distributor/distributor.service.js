@@ -2,6 +2,7 @@
 
 const { query } = require('../../config/database');
 const tripsService = require('../trips/trips.service');
+const ApiError = require('../../utils/ApiError');
 
 /**
  * Search shops by name, for the "search shops" step when adding trip stops.
@@ -22,6 +23,41 @@ async function searchShops(searchTerm, lat, lng) {
       .sort((a, b) => a.distanceKm - b.distanceKm);
   }
   return rows;
+}
+
+/**
+ * Looks up a shopkeeper's registered shop(s) by their unique code
+ * (e.g. "DL-7K2M9X"), so a distributor can add a delivery stop by ID
+ * instead of retyping an address the shopkeeper already entered once.
+ * Returns every shop that account owns - a shopkeeper can register
+ * more than one location, so the caller may need to let the distributor
+ * pick among them rather than assuming exactly one result.
+ */
+async function lookupShopsByCode(code) {
+  const { rows: userRows } = await query(
+    `SELECT id, full_name FROM users WHERE user_code = $1 AND role = 'shopkeeper' AND is_active = TRUE`,
+    [code]
+  );
+  const shopkeeperUser = userRows[0];
+  if (!shopkeeperUser) {
+    throw ApiError.notFound('No active shopkeeper found with that code. Double-check the code and try again.');
+  }
+
+  const { rows: shops } = await query(
+    `SELECT id, shop_name, contact_number, address, lat, lng
+     FROM shops WHERE shopkeeper_user_id = $1
+     ORDER BY created_at ASC`,
+    [shopkeeperUser.id]
+  );
+
+  if (shops.length === 0) {
+    throw ApiError.notFound('This shopkeeper has not registered a shop location yet.');
+  }
+
+  return {
+    shopkeeperName: shopkeeperUser.full_name,
+    shops,
+  };
 }
 
 async function getDashboard(userId) {
@@ -106,4 +142,4 @@ async function getReports(userId, { fromDate, toDate } = {}) {
   };
 }
 
-module.exports = { searchShops, getDashboard, getReports };
+module.exports = { searchShops, lookupShopsByCode, getDashboard, getReports };
