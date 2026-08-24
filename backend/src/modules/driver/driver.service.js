@@ -58,9 +58,13 @@ async function setOnlineStatus(userId, isOnline, lat, lng) {
 async function getDashboard(userId) {
   const profile = await getProfile(userId);
 
+  // Previously LIMIT 1 - which meant a driver juggling multiple assigned
+  // trips (perfectly possible: nothing stops two distributors selecting
+  // the same driver) would only ever see the most recent one, with
+  // earlier ones silently hidden even though still active.
   const { rows: activeTripRows } = await query(
     `SELECT * FROM trips WHERE driver_id = $1 AND status IN ('assigned', 'pickup_confirmed', 'in_progress')
-     ORDER BY assigned_at DESC LIMIT 1`,
+     ORDER BY assigned_at DESC`,
     [profile.id]
   );
 
@@ -72,7 +76,7 @@ async function getDashboard(userId) {
 
   return {
     profile,
-    activeTrip: activeTripRows[0] || null,
+    activeTrips: activeTripRows,
     totalEarnings: Number(earningsRows[0].total_earnings),
     completedTrips: earningsRows[0].completed_trips,
   };

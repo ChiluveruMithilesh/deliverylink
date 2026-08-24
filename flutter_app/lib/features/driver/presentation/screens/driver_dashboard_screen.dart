@@ -38,7 +38,8 @@ class DriverDashboardScreen extends ConsumerWidget {
               ErrorView(message: err.toString(), onRetry: () => ref.invalidate(driverDashboardProvider)),
           data: (dashboard) {
             final profile = dashboard['profile'] as Map<String, dynamic>? ?? {};
-            final activeTrip = dashboard['activeTrip'] as Map<String, dynamic>?;
+            final activeTrips = (dashboard['activeTrips'] as List<dynamic>? ?? [])
+                .cast<Map<String, dynamic>>();
             final totalEarnings = dashboard['totalEarnings'] ?? 0;
             final completedTrips = dashboard['completedTrips'] ?? 0;
             final isOnline = profile['is_online'] == true;
@@ -56,16 +57,21 @@ class DriverDashboardScreen extends ConsumerWidget {
                   ],
                 ),
                 const SizedBox(height: 24),
-                if (activeTrip != null) ...[
-                  Text('Active Trip', style: Theme.of(context).textTheme.titleLarge),
+                if (activeTrips.isNotEmpty) ...[
+                  Text(
+                    activeTrips.length > 1 ? 'Active Trips (${activeTrips.length})' : 'Active Trip',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
                   const SizedBox(height: 12),
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.local_shipping, color: Colors.orange),
-                      title: Text(activeTrip['goods_description'] as String? ?? 'Trip'),
-                      subtitle: Text('Status: ${activeTrip['status']}'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => context.push('/driver/active-trip/${activeTrip['id']}'),
+                  ...activeTrips.map(
+                    (trip) => Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.local_shipping, color: Colors.orange),
+                        title: Text(trip['goods_description'] as String? ?? 'Trip'),
+                        subtitle: Text('Status: ${trip['status']}'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => context.push('/driver/active-trip/${trip['id']}'),
+                      ),
                     ),
                   ),
                 ] else
