@@ -67,7 +67,7 @@ const deliverStopValidator = [
 
 const cancelTripValidator = [
   param('id').isUUID(),
-  body('reason').optional().isString().isLength({ max: 500 }),
+  body('reason').optional({ nullable: true }).isString().isLength({ max: 500 }),
 ];
 
 module.exports = {

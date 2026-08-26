@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../shared/widgets/error_view.dart';
+import '../../../../core/network/api_exception.dart';
 import '../providers/distributor_provider.dart';
 
 class DistributorDashboardScreen extends ConsumerWidget {
@@ -133,14 +134,15 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _TripCard extends StatelessWidget {
+class _TripCard extends ConsumerWidget {
   const _TripCard({required this.trip});
   final Map<String, dynamic> trip;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final status = trip['status'] as String? ?? '';
     final stops = trip['total_stops'] ?? trip['totalStops'] ?? 0;
+    final canCancel = !['completed', 'cancelled', 'in_progress'].contains(status);
 
     return Card(
       child: ListTile(
@@ -151,9 +153,49 @@ class _TripCard extends StatelessWidget {
         ),
         title: Text(trip['goods_description'] ?? trip['goodsDescription'] ?? 'Trip'),
         subtitle: Text('$stops stops • ${status.replaceAll('_', ' ')}'),
-        trailing: const Icon(Icons.chevron_right),
+        trailing: canCancel
+            ? IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                tooltip: 'Cancel this trip',
+                onPressed: () => _confirmCancel(context, ref),
+              )
+            : const Icon(Icons.chevron_right),
       ),
     );
+  }
+
+  Future<void> _confirmCancel(BuildContext context, WidgetRef ref) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cancel this trip?'),
+        content: Text(
+          'This will cancel "${trip['goods_description'] ?? trip['goodsDescription'] ?? 'this trip'}". '
+          'If a driver has already been assigned, they will be notified.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('No, keep it')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Yes, cancel it', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await ref.read(distributorRepositoryProvider).cancelTrip(trip['id'] as String);
+      ref.invalidate(distributorDashboardProvider);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Trip cancelled')));
+      }
+    } on ApiException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
   }
 
   Color _statusColor(String status) {

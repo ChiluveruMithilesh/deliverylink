@@ -30,7 +30,9 @@ class DistributorRepository {
   }
 
   Future<Map<String, dynamic>> cancelTrip(String tripId, {String? reason}) async {
-    final res = await _api.post('/trips/$tripId/cancel', data: {'reason': reason});
+    final res = await _api.post('/trips/$tripId/cancel', data: {
+      if (reason != null) 'reason': reason,
+    });
     return res['data'] as Map<String, dynamic>;
   }
 
@@ -47,6 +49,14 @@ class DistributorRepository {
   Future<List<dynamic>> searchShops(String query) async {
     final res = await _api.get('/distributor/shops/search', query: {'q': query});
     return res['data'] as List<dynamic>;
+  }
+  
+  /// Looks up a shopkeeper's registered shop(s) by their unique code
+  /// (e.g. "DL-7K2M9X"). Returns the shopkeeper's name plus every shop
+  /// they've registered - usually one, occasionally more than one.
+  Future<Map<String, dynamic>> lookupShopByCode(String code) async {
+    final res = await _api.get('/distributor/shops/by-code', query: {'code': code});
+    return res['data'] as Map<String, dynamic>;
   }
 
   Future<Map<String, dynamic>> getReports({String? fromDate, String? toDate}) async {

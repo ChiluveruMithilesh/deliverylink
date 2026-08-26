@@ -36,7 +36,7 @@ class _CreateTripScreenState extends ConsumerState<CreateTripScreen> {
   }
 
   Future<void> _addStop() async {
-    final stop = await showAddStopSheet(context);
+    final stop = await showAddStopSheet(context, ref);
     if (stop != null) {
       if (_stops.length >= 40) {
         if (mounted) {

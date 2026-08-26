@@ -103,16 +103,104 @@ async function getPlatformAnalytics() {
   const { rows: tripCounts } = await query(
     `SELECT status, COUNT(*)::int AS count FROM trips GROUP BY status`
   );
-  const { rows: volume } = await query(
-    `SELECT COUNT(*)::int AS trips_last_30_days,
-            COALESCE(SUM(payment_offered), 0) AS gmv_last_30_days
-     FROM trips WHERE created_at >= now() - interval '30 days'`
+
+  const { rows: overviewRows } = await query(
+    `SELECT
+       COUNT(*)::int AS total_trips,
+       COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_trips,
+       COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_trips,
+       COALESCE(SUM(payment_offered) FILTER (WHERE status = 'completed'), 0) AS total_gmv,
+       COALESCE(AVG(payment_offered) FILTER (WHERE status = 'completed'), 0) AS avg_order_value
+     FROM trips`
+  );
+  const overview = overviewRows[0];
+  const finishedCount = overview.completed_trips + overview.cancelled_trips;
+  const completionRate = finishedCount > 0 ? Math.round((overview.completed_trips / finishedCount) * 1000) / 10 : 0;
+
+  const { rows: periodRows } = await query(
+    `SELECT
+       COUNT(*) FILTER (WHERE created_at >= CURRENT_DATE)::int AS today_trips,
+       COALESCE(SUM(payment_offered) FILTER (WHERE status = 'completed' AND completed_at >= CURRENT_DATE), 0) AS today_gmv,
+       COUNT(*) FILTER (WHERE created_at >= date_trunc('week', CURRENT_DATE))::int AS week_trips,
+       COALESCE(SUM(payment_offered) FILTER (WHERE status = 'completed' AND completed_at >= date_trunc('week', CURRENT_DATE)), 0) AS week_gmv,
+       COUNT(*) FILTER (WHERE created_at >= date_trunc('month', CURRENT_DATE))::int AS month_trips,
+       COALESCE(SUM(payment_offered) FILTER (WHERE status = 'completed' AND completed_at >= date_trunc('month', CURRENT_DATE)), 0) AS month_gmv
+     FROM trips`
+  );
+  const period = periodRows[0];
+
+  const { rows: dailyTrend } = await query(
+    `SELECT
+       gs.day::date AS day,
+       COALESCE(tc.trip_count, 0)::int AS trips,
+       COALESCE(gm.gmv, 0) AS gmv
+     FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, INTERVAL '1 day') AS gs(day)
+     LEFT JOIN (
+       SELECT date_trunc('day', created_at) AS day, COUNT(*) AS trip_count
+       FROM trips WHERE created_at >= CURRENT_DATE - INTERVAL '29 days'
+       GROUP BY 1
+     ) tc ON tc.day = gs.day
+     LEFT JOIN (
+       SELECT date_trunc('day', completed_at) AS day, SUM(payment_offered) AS gmv
+       FROM trips WHERE status = 'completed' AND completed_at >= CURRENT_DATE - INTERVAL '29 days'
+       GROUP BY 1
+     ) gm ON gm.day = gs.day
+     ORDER BY gs.day ASC`
+  );
+
+  const { rows: topDistributors } = await query(
+    `SELECT d.business_name,
+            COUNT(*) FILTER (WHERE t.status = 'completed')::int AS completed_trips,
+            COALESCE(SUM(t.payment_offered) FILTER (WHERE t.status = 'completed'), 0) AS total_gmv
+     FROM trips t
+     JOIN distributors d ON d.id = t.distributor_id
+     GROUP BY d.business_name
+     ORDER BY total_gmv DESC
+     LIMIT 5`
+  );
+
+  const { rows: topDrivers } = await query(
+    `SELECT u.full_name AS driver_name,
+            COUNT(*) FILTER (WHERE t.status = 'completed')::int AS completed_trips,
+            COALESCE(SUM(t.payment_offered) FILTER (WHERE t.status = 'completed'), 0) AS total_earnings
+     FROM trips t
+     JOIN drivers dr ON dr.id = t.driver_id
+     JOIN users u ON u.id = dr.user_id
+     WHERE t.driver_id IS NOT NULL
+     GROUP BY u.full_name
+     ORDER BY total_earnings DESC
+     LIMIT 5`
   );
 
   return {
     usersByRole: userCounts.reduce((acc, r) => ({ ...acc, [r.role]: r.count }), {}),
     tripsByStatus: tripCounts.reduce((acc, r) => ({ ...acc, [r.status]: r.count }), {}),
-    last30Days: volume[0],
+    overview: {
+      totalTrips: overview.total_trips,
+      completedTrips: overview.completed_trips,
+      cancelledTrips: overview.cancelled_trips,
+      totalGmv: Number(overview.total_gmv),
+      avgOrderValue: Math.round(Number(overview.avg_order_value) * 100) / 100,
+      completionRate,
+    },
+    today: { trips: period.today_trips, gmv: Number(period.today_gmv) },
+    thisWeek: { trips: period.week_trips, gmv: Number(period.week_gmv) },
+    thisMonth: { trips: period.month_trips, gmv: Number(period.month_gmv) },
+    dailyTrend: dailyTrend.map((d) => ({
+      date: d.day.toISOString().slice(0, 10),
+      trips: d.trips,
+      gmv: Number(d.gmv),
+    })),
+    topDistributors: topDistributors.map((d) => ({
+      businessName: d.business_name,
+      completedTrips: d.completed_trips,
+      totalGmv: Number(d.total_gmv),
+    })),
+    topDrivers: topDrivers.map((d) => ({
+      driverName: d.driver_name,
+      completedTrips: d.completed_trips,
+      totalEarnings: Number(d.total_earnings),
+    })),
   };
 }
 
