@@ -96,6 +96,50 @@ async function listAllTrips({ status, page = 1, limit = 20 } = {}) {
   return rows;
 }
 
+async function getStaleTrips() {
+  const { rows } = await query(
+    `SELECT t.id, t.goods_description, t.payment_offered, t.published_at,
+            dist.business_name AS distributor_name
+     FROM trips t
+     JOIN distributors dist ON dist.id = t.distributor_id
+     WHERE t.status = 'published'
+       AND t.published_at < now() - INTERVAL '24 hours'
+       AND NOT EXISTS (SELECT 1 FROM trip_bids b WHERE b.trip_id = t.id)
+     ORDER BY t.published_at ASC
+     LIMIT 10`
+  );
+  return rows;
+}
+
+async function getNeedsAttention() {
+  const staleTrips = await getStaleTrips();
+  const pendingDrivers = await listPendingDrivers();
+
+  const items = [];
+
+  if (pendingDrivers.length > 0) {
+    items.push({
+      type: 'pending_drivers',
+      severity: 'warning',
+      title: `${pendingDrivers.length} driver${pendingDrivers.length > 1 ? 's' : ''} awaiting verification`,
+      subtitle: 'Review their documents to let them start accepting trips.',
+    });
+  }
+
+  for (const trip of staleTrips) {
+    const hoursAgo = Math.round((Date.now() - new Date(trip.published_at).getTime()) / (1000 * 60 * 60));
+    items.push({
+      type: 'stale_trip',
+      severity: 'urgent',
+      tripId: trip.id,
+      title: `"${trip.goods_description}" has no driver interest`,
+      subtitle: `Published by ${trip.distributor_name} ${hoursAgo}h ago, ₹${trip.payment_offered} offered.`,
+    });
+  }
+
+  return items;
+}
+
 async function getPlatformAnalytics() {
   const { rows: userCounts } = await query(
     `SELECT role, COUNT(*)::int AS count FROM users GROUP BY role`
@@ -130,10 +174,7 @@ async function getPlatformAnalytics() {
   const period = periodRows[0];
 
   const { rows: dailyTrend } = await query(
-    `SELECT
-       gs.day::date AS day,
-       COALESCE(tc.trip_count, 0)::int AS trips,
-       COALESCE(gm.gmv, 0) AS gmv
+    `SELECT gs.day::date AS bucket, COALESCE(tc.trip_count, 0)::int AS trips, COALESCE(gm.gmv, 0) AS gmv
      FROM generate_series(CURRENT_DATE - INTERVAL '29 days', CURRENT_DATE, INTERVAL '1 day') AS gs(day)
      LEFT JOIN (
        SELECT date_trunc('day', created_at) AS day, COUNT(*) AS trip_count
@@ -146,6 +187,48 @@ async function getPlatformAnalytics() {
        GROUP BY 1
      ) gm ON gm.day = gs.day
      ORDER BY gs.day ASC`
+  );
+
+  const { rows: monthlyTrend } = await query(
+    `SELECT gs.month::date AS bucket, COALESCE(tc.trip_count, 0)::int AS trips, COALESCE(gm.gmv, 0) AS gmv
+     FROM generate_series(
+       date_trunc('month', CURRENT_DATE) - INTERVAL '11 months',
+       date_trunc('month', CURRENT_DATE),
+       INTERVAL '1 month'
+     ) AS gs(month)
+     LEFT JOIN (
+       SELECT date_trunc('month', created_at) AS month, COUNT(*) AS trip_count
+       FROM trips WHERE created_at >= date_trunc('month', CURRENT_DATE) - INTERVAL '11 months'
+       GROUP BY 1
+     ) tc ON tc.month = gs.month
+     LEFT JOIN (
+       SELECT date_trunc('month', completed_at) AS month, SUM(payment_offered) AS gmv
+       FROM trips
+       WHERE status = 'completed' AND completed_at >= date_trunc('month', CURRENT_DATE) - INTERVAL '11 months'
+       GROUP BY 1
+     ) gm ON gm.month = gs.month
+     ORDER BY gs.month ASC`
+  );
+
+  const { rows: yearlyTrend } = await query(
+    `SELECT gs.year::date AS bucket, COALESCE(tc.trip_count, 0)::int AS trips, COALESCE(gm.gmv, 0) AS gmv
+     FROM generate_series(
+       date_trunc('year', CURRENT_DATE) - INTERVAL '4 years',
+       date_trunc('year', CURRENT_DATE),
+       INTERVAL '1 year'
+     ) AS gs(year)
+     LEFT JOIN (
+       SELECT date_trunc('year', created_at) AS year, COUNT(*) AS trip_count
+       FROM trips WHERE created_at >= date_trunc('year', CURRENT_DATE) - INTERVAL '4 years'
+       GROUP BY 1
+     ) tc ON tc.year = gs.year
+     LEFT JOIN (
+       SELECT date_trunc('year', completed_at) AS year, SUM(payment_offered) AS gmv
+       FROM trips
+       WHERE status = 'completed' AND completed_at >= date_trunc('year', CURRENT_DATE) - INTERVAL '4 years'
+       GROUP BY 1
+     ) gm ON gm.year = gs.year
+     ORDER BY gs.year ASC`
   );
 
   const { rows: topDistributors } = await query(
@@ -172,6 +255,15 @@ async function getPlatformAnalytics() {
      LIMIT 5`
   );
 
+  const needsAttention = await getNeedsAttention();
+
+  const toSeries = (rows) =>
+    rows.map((r) => ({
+      date: r.bucket.toISOString().slice(0, 10),
+      trips: r.trips,
+      gmv: Number(r.gmv),
+    }));
+
   return {
     usersByRole: userCounts.reduce((acc, r) => ({ ...acc, [r.role]: r.count }), {}),
     tripsByStatus: tripCounts.reduce((acc, r) => ({ ...acc, [r.status]: r.count }), {}),
@@ -186,11 +278,10 @@ async function getPlatformAnalytics() {
     today: { trips: period.today_trips, gmv: Number(period.today_gmv) },
     thisWeek: { trips: period.week_trips, gmv: Number(period.week_gmv) },
     thisMonth: { trips: period.month_trips, gmv: Number(period.month_gmv) },
-    dailyTrend: dailyTrend.map((d) => ({
-      date: d.day.toISOString().slice(0, 10),
-      trips: d.trips,
-      gmv: Number(d.gmv),
-    })),
+    dailyTrend: toSeries(dailyTrend),
+    monthlyTrend: toSeries(monthlyTrend),
+    yearlyTrend: toSeries(yearlyTrend),
+    needsAttention,
     topDistributors: topDistributors.map((d) => ({
       businessName: d.business_name,
       completedTrips: d.completed_trips,
